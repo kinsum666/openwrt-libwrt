@@ -1,5 +1,5 @@
 # 修改默认IP & 固件名称 & 编译署名和时间
-sed -i 's/192.168.1.1/192.168.2.1/g' package/base-files/files/bin/config_generate
+sed -i 's/192.168.1.1/192.168.100.1/g' package/base-files/files/bin/config_generate
 sed -i "s/hostname='.*'/hostname='Roc'/g" package/base-files/files/bin/config_generate
 sed -i "s#_('Firmware Version'), (L\.isObject(boardinfo\.release) ? boardinfo\.release\.description + ' / ' : '') + (luciversion || ''),# \
             _('Firmware Version'),\n \
@@ -72,6 +72,16 @@ git clone --depth=1 https://github.com/destan19/OpenAppFilter.git package/OpenAp
 git clone --depth=1 https://github.com/laipeng668/luci-app-gecoosac package/luci-app-gecoosac
 git clone --depth=1 https://github.com/NONGFAH/luci-app-athena-led package/luci-app-athena-led
 chmod +x package/luci-app-athena-led/root/etc/init.d/athena_led package/luci-app-athena-led/root/usr/sbin/athena-led
+
+# 在版本号中显示编译者、日期、设备名
+sed -i "s/OpenWrt /Kinsum Build $(TZ=UTC-8 date '+%Y.%m.%d') @ JDC /g" package/default-settings/files/zzz-default-settings
+
+# ========== 修改 banner 登录欢迎信息 ==========
+echo "-----------------------------------------------" >> package/base-files/files/etc/banner
+echo "  Firmware: JDC" >> package/base-files/files/etc/banner
+echo "  Compiled by Kinsum @ $(TZ=UTC-8 date '+%Y-%m-%d %H:%M:%S')" >> package/base-files/files/etc/banner
+echo "-----------------------------------------------" >> package/base-files/files/etc/banner
+
 
 ### PassWall & OpenClash ###
 
