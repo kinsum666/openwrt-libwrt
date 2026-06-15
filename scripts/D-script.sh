@@ -73,11 +73,16 @@ chmod +x "$(pwd)/collect_proxy_pkgs.sh"
 
 
 # 修复因内核版本升级导致的 NSS 补丁失败
+
+# 修复因内核版本升级导致的 NSS 补丁失败
 if [ -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch ]; then
     echo "移除不兼容的 NSS VXLAN 补丁"
     rm -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch
 fi
-
+if [ -f target/linux/qualcommax/patches-6.12/0607-2-qca-nss-clients-add-ipsec-support.patch ]; then
+    echo "移除不兼容的 NSS IPSec 补丁"
+    rm -f target/linux/qualcommax/patches-6.12/0607-2-qca-nss-clients-add-ipsec-support.patch
+fi
 
 
 # ========== 4. 预置安装脚本到固件（刷机后位于 /root/install-proxy.sh） ==========
