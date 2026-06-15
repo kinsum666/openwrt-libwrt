@@ -20,6 +20,12 @@ TAR_NAME="proxy-packages.tar.gz"
 WORK_DIR=$(mktemp -d)
 cd "$WORK_DIR" || exit 1
 
+# 添加 dockerman 所需的源（来自 iStore 的 nas 仓库）
+echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+./scripts/feeds update nas_luci
+./scripts/feeds install -a -p nas_luci
+
+
 # 需要收集的包名列表
 PACKAGES="luci-app-openclash luci-app-passwall luci-app-passwall2 luci-app-homeproxy luci-app-ssr-plus \
           xray-core sing-box clash hysteria v2ray-geodata geoview haproxy chinadns-ng tcping ipt2socks microsocks"
