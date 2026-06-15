@@ -1,12 +1,8 @@
-
-# ========== 1. 添加 iStore 专属 feeds 源 ==========
+#!/bin/sh
+# ========== 1. 添加 iStore 专属 feeds 源（编译前执行） ==========
 if ! grep -q "istore" feeds.conf.default; then
     echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
-fi
-if ! grep -q "nas " feeds.conf.default; then
     echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
-fi
-if ! grep -q "nas_luci" feeds.conf.default; then
     echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
 fi
 
@@ -16,19 +12,19 @@ fi
 ./scripts/feeds install -a -p nas
 ./scripts/feeds install -a -p nas_luci
 
-# ========== 2. 将 iStore 组件写入 .config（强制编译进固件） ==========
+# ========== 2. 将 iStore/Docker 组件写入 .config（强制编译进固件） ==========
 cat >> .config << 'EOF'
 # iStore 核心组件
 CONFIG_PACKAGE_luci-app-istorex=y
 CONFIG_PACKAGE_luci-app-quickstart=y
 CONFIG_PACKAGE_luci-app-store=y
-# iStore 依赖
+# Docker 管理器（iStore 依赖）
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
+# iStore 依赖库
 CONFIG_PACKAGE_luci-lib-taskd=y
 CONFIG_PACKAGE_luci-lib-xterm=y
 CONFIG_PACKAGE_luci-compat=y
-# Docker 管理器（重要！避免编译错误）
-CONFIG_PACKAGE_luci-app-dockerman=y
-CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
 # 可选配套工具
 CONFIG_PACKAGE_luci-app-diskman=y
 CONFIG_PACKAGE_luci-app-ddns-to=y
@@ -36,6 +32,10 @@ EOF
 
 # 关键步骤：重新解析配置，使上述选项生效
 make defconfig
+
+# ========== 修复因内核版本升级导致的 NSS 补丁失败 ==========
+rm -f target/linux/qualcommax/patches-6.12/060*-qca-nss-clients-*.patch
+echo "已移除不兼容的 NSS 客户端补丁"
 
 # ========== 3. 生成代理插件打包脚本（供编译后使用） ==========
 cat > "$(pwd)/collect_proxy_pkgs.sh" << 'EOF'
@@ -71,23 +71,9 @@ if [ "$(ls -A *.ipk 2>/dev/null)" ]; then
 else
     echo "警告：未找到任何代理 ipk 文件"
 fi
-
 rm -rf "$WORK_DIR"
 EOF
-
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
-
-
-# 修复因内核版本升级导致的 NSS 补丁失败
-# 修复因内核版本升级导致的 NSS 补丁失败
-if [ -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch ]; then
-    echo "移除不兼容的 NSS VXLAN 补丁"
-    rm -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch
-fi
-if [ -f target/linux/qualcommax/patches-6.12/0607-2-qca-nss-clients-add-ipsec-support.patch ]; then
-    echo "移除不兼容的 NSS IPSec 补丁"
-    rm -f target/linux/qualcommax/patches-6.12/0607-2-qca-nss-clients-add-ipsec-support.patch
-fi
 
 # ========== 4. 预置安装脚本到固件 ==========
 mkdir -p package/base-files/files/root
