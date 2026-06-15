@@ -1,5 +1,4 @@
 # ========== 1. 添加 iStore 专属 feeds 源 ==========
-# 避免重复添加，先检查是否已存在
 if ! grep -q "istore" feeds.conf.default; then
     echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
     echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
@@ -22,19 +21,22 @@ CONFIG_PACKAGE_luci-app-store=y
 CONFIG_PACKAGE_luci-lib-taskd=y
 CONFIG_PACKAGE_luci-lib-xterm=y
 CONFIG_PACKAGE_luci-compat=y
+# Docker 管理器（重要！避免编译错误）
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
 # 可选配套工具
 CONFIG_PACKAGE_luci-app-diskman=y
 CONFIG_PACKAGE_luci-app-ddns-to=y
 EOF
 
+# 关键步骤：重新解析配置，使上述选项生效
+make defconfig
+
 # ========== 3. 生成代理插件打包脚本（供编译后使用） ==========
 cat > "$(pwd)/collect_proxy_pkgs.sh" << 'EOF'
 #!/bin/sh
-# 自动查找 OpenWrt 编译目录
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_BASE="$SCRIPT_DIR/bin/packages"
-
-# 查找实际的架构目录（如 aarch64_cortex-a53 或 qualcommax）
 ARCH_DIR=$(find "$PKG_BASE" -type d -name "packages" | head -1)
 if [ -z "$ARCH_DIR" ]; then
     echo "未找到 packages 目录"
@@ -43,11 +45,9 @@ fi
 
 OUTPUT_DIR="$SCRIPT_DIR/bin/targets/*/*"
 TAR_NAME="proxy-packages.tar.gz"
-
 WORK_DIR=$(mktemp -d)
 cd "$WORK_DIR" || exit 1
 
-# 需要收集的包名列表
 PACKAGES="luci-app-openclash luci-app-passwall luci-app-passwall2 luci-app-homeproxy luci-app-ssr-plus \
           xray-core sing-box clash hysteria v2ray-geodata geoview haproxy chinadns-ng tcping ipt2socks microsocks"
 
@@ -57,7 +57,6 @@ done
 
 if [ "$(ls -A *.ipk 2>/dev/null)" ]; then
     tar -czf "$TAR_NAME" *.ipk
-    # 复制到每个固件输出目录
     for dir in $OUTPUT_DIR; do
         if [ -d "$dir" ]; then
             cp "$TAR_NAME" "$dir/"
@@ -73,11 +72,10 @@ EOF
 
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
 
-# ========== 4. 预置安装脚本到固件（刷机后位于 /root/install-proxy.sh） ==========
+# ========== 4. 预置安装脚本到固件 ==========
 mkdir -p package/base-files/files/root
 cat > package/base-files/files/root/install-proxy.sh << 'EOF'
 #!/bin/sh
-# 一键安装代理插件（手动上传 proxy-packages.tar.gz 到 /tmp）
 if [ -f /tmp/proxy-packages.tar.gz ]; then
     mkdir -p /tmp/proxy_ipk
     tar -xzf /tmp/proxy-packages.tar.gz -C /tmp/proxy_ipk
@@ -94,4 +92,4 @@ fi
 EOF
 chmod +x package/base-files/files/root/install-proxy.sh
 
-echo "已添加 iStore 源并写入配置，同时生成 collect_proxy_pkgs.sh 和预置安装脚本"
+echo "已添加 iStore 源，写入配置并重新 defconfig，同时生成代理打包脚本和安装脚本"
