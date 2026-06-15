@@ -1,13 +1,43 @@
-# ========== 生成代理插件打包脚本（供编译后使用） ==========
-# 注意：此脚本将在编译完成后由 GitHub Actions 的 Organize Files 步骤调用
-# 使用绝对路径，避免依赖环境变量
+#!/bin/sh
+# ========== 1. 添加 iStore 专属 feeds 源（编译前执行） ==========
+if ! grep -q "istore" feeds.conf.default; then
+    echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
+    echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
+    echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+fi
+
+# 更新并安装 iStore 相关的 feeds
+./scripts/feeds update istore nas nas_luci
+./scripts/feeds install -a -p istore
+./scripts/feeds install -a -p nas
+./scripts/feeds install -a -p nas_luci
+
+# ========== 2. 将 iStore/Docker 组件写入 .config（强制编译进固件） ==========
+cat >> .config << 'EOF'
+# iStore 核心组件
+CONFIG_PACKAGE_luci-app-istorex=y
+CONFIG_PACKAGE_luci-app-quickstart=y
+CONFIG_PACKAGE_luci-app-store=y
+# Docker 管理器（iStore 依赖）
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
+# iStore 依赖库
+CONFIG_PACKAGE_luci-lib-taskd=y
+CONFIG_PACKAGE_luci-lib-xterm=y
+CONFIG_PACKAGE_luci-compat=y
+# 可选配套工具
+CONFIG_PACKAGE_luci-app-diskman=y
+CONFIG_PACKAGE_luci-app-ddns-to=y
+EOF
+
+# 重新解析配置（重要！让上述选项生效）
+make defconfig
+
+# ========== 3. 生成代理插件打包脚本（供编译后使用，不包含 feeds 操作） ==========
 cat > "$(pwd)/collect_proxy_pkgs.sh" << 'EOF'
 #!/bin/sh
-# 自动查找 OpenWrt 编译目录
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_BASE="$SCRIPT_DIR/bin/packages"
-
-# 查找实际的架构目录（如 aarch64_cortex-a53 或 qualcommax）
 ARCH_DIR=$(find "$PKG_BASE" -type d -name "packages" | head -1)
 if [ -z "$ARCH_DIR" ]; then
     echo "未找到 packages 目录"
@@ -16,17 +46,9 @@ fi
 
 OUTPUT_DIR="$SCRIPT_DIR/bin/targets/*/*"
 TAR_NAME="proxy-packages.tar.gz"
-
 WORK_DIR=$(mktemp -d)
 cd "$WORK_DIR" || exit 1
 
-# 添加 dockerman 所需的源（来自 iStore 的 nas 仓库）
-echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
-./scripts/feeds update nas_luci
-./scripts/feeds install -a -p nas_luci
-
-
-# 需要收集的包名列表
 PACKAGES="luci-app-openclash luci-app-passwall luci-app-passwall2 luci-app-homeproxy luci-app-ssr-plus \
           xray-core sing-box clash hysteria v2ray-geodata geoview haproxy chinadns-ng tcping ipt2socks microsocks"
 
@@ -36,7 +58,6 @@ done
 
 if [ "$(ls -A *.ipk 2>/dev/null)" ]; then
     tar -czf "$TAR_NAME" *.ipk
-    # 复制到每个固件输出目录
     for dir in $OUTPUT_DIR; do
         if [ -d "$dir" ]; then
             cp "$TAR_NAME" "$dir/"
@@ -46,17 +67,14 @@ if [ "$(ls -A *.ipk 2>/dev/null)" ]; then
 else
     echo "警告：未找到任何代理 ipk 文件"
 fi
-
 rm -rf "$WORK_DIR"
 EOF
-
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
 
-# 预置安装脚本到固件（刷机后位于 /root/install-proxy.sh）
+# ========== 4. 预置安装脚本到固件（刷机后位于 /root/install-proxy.sh） ==========
 mkdir -p package/base-files/files/root
 cat > package/base-files/files/root/install-proxy.sh << 'EOF'
 #!/bin/sh
-# 一键安装代理插件（手动上传 proxy-packages.tar.gz 到 /tmp）
 if [ -f /tmp/proxy-packages.tar.gz ]; then
     mkdir -p /tmp/proxy_ipk
     tar -xzf /tmp/proxy-packages.tar.gz -C /tmp/proxy_ipk
@@ -73,4 +91,4 @@ fi
 EOF
 chmod +x package/base-files/files/root/install-proxy.sh
 
-echo "已生成 collect_proxy_pkgs.sh 和预置安装脚本"
+echo "已添加 iStore 源，写入配置并重新 defconfig，同时生成代理打包脚本和安装脚本"
