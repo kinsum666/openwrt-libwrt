@@ -1,9 +1,13 @@
+
 # ========== 1. 添加 iStore 专属 feeds 源 ==========
 if ! grep -q "istore" feeds.conf.default; then
     echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
+fi
+if ! grep -q "nas " feeds.conf.default; then
     echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
+fi
+if ! grep -q "nas_luci" feeds.conf.default; then
     echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
-
 fi
 
 # 更新并安装 iStore 相关的 feeds
@@ -72,6 +76,14 @@ rm -rf "$WORK_DIR"
 EOF
 
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
+
+
+# 修复因内核版本升级导致的 NSS 补丁失败
+if [ -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch ]; then
+    echo "移除不兼容的 NSS VXLAN 补丁"
+    rm -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch
+fi
+
 
 # ========== 4. 预置安装脚本到固件 ==========
 mkdir -p package/base-files/files/root
