@@ -30,10 +30,14 @@ CONFIG_PACKAGE_luci-app-diskman=y
 CONFIG_PACKAGE_luci-app-ddns-to=y
 EOF
 
-# 重新解析配置（重要！让上述选项生效）
+# 关键步骤：重新解析配置，使上述选项生效
 make defconfig
 
-# ========== 3. 生成代理插件打包脚本（供编译后使用，不包含 feeds 操作） ==========
+# ========== 修复因内核版本升级导致的 NSS 补丁失败 ==========
+rm -f target/linux/qualcommax/patches-6.12/060*-qca-nss-clients-*.patch
+echo "已移除不兼容的 NSS 客户端补丁"
+
+# ========== 3. 生成代理插件打包脚本（供编译后使用） ==========
 cat > "$(pwd)/collect_proxy_pkgs.sh" << 'EOF'
 #!/bin/sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -71,21 +75,7 @@ rm -rf "$WORK_DIR"
 EOF
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
 
-
-# 修复因内核版本升级导致的 NSS 补丁失败
-
-# 修复因内核版本升级导致的 NSS 补丁失败
-if [ -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch ]; then
-    echo "移除不兼容的 NSS VXLAN 补丁"
-    rm -f target/linux/qualcommax/patches-6.12/0603-5-qca-nss-clients-add-vxlan-support.patch
-fi
-if [ -f target/linux/qualcommax/patches-6.12/0607-2-qca-nss-clients-add-ipsec-support.patch ]; then
-    echo "移除不兼容的 NSS IPSec 补丁"
-    rm -f target/linux/qualcommax/patches-6.12/0607-2-qca-nss-clients-add-ipsec-support.patch
-fi
-
-
-# ========== 4. 预置安装脚本到固件（刷机后位于 /root/install-proxy.sh） ==========
+# ========== 4. 预置安装脚本到固件 ==========
 mkdir -p package/base-files/files/root
 cat > package/base-files/files/root/install-proxy.sh << 'EOF'
 #!/bin/sh
