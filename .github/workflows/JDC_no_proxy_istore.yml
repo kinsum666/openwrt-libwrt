@@ -14,7 +14,7 @@ env:
   REPO_BRANCH: master
   CONFIG_FILE: configs/D_gen.config
   GENERAL_CONFIG_FILE: configs/D_gen.config
-  DIY_SCRIPT: scripts/D-istore.sh
+  DIY_SCRIPT: scripts/D_istore.sh
   CLASH_KERNEL: amd64
   FIRMWARE_TAG: JDC_no_proxy
   TZ: Asia/Shanghai
