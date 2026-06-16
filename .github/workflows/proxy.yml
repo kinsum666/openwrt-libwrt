@@ -12,16 +12,16 @@ on:
           - 太乙 (qualcommax/ipq53xx)
           - 雅典娜 (qualcommax/ipq807x)
       openwrt_branch:
-        description: 'OpenWrt 分支版本 (如 23.05)'
+        description: 'ImmortalWrt 版本 (如 23.05)'
         required: true
         type: string
-        default: '25.12'
+        default: '23.05'
 
 jobs:
-  download-packages:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: 设置架构与源地址
+      - name: 设置设备架构和源地址
         id: config
         run: |
           case "${{ github.event.inputs.device }}" in
@@ -39,36 +39,57 @@ jobs:
               ;;
           esac
 
-          VER="${{ github.event.inputs.openwrt_branch }}"
-          # ImmortalWrt 正式版源 (核心 + 软件包)
-          echo "BASE_URL=https://downloads.immortalwrt.org/releases/${VER}/targets/${TARGET}" >> $GITHUB_OUTPUT
-          echo "PACKAGES_URL=https://downloads.immortalwrt.org/releases/${VER}/packages/${ARCH}" >> $GITHUB_OUTPUT
-          # 第三方代理源 (由 kenzok8 维护，包含 passwall/openclash 等)
+          BRANCH="${{ github.event.inputs.openwrt_branch }}"
+          echo "BASE_URL=https://downloads.immortalwrt.org/releases/${BRANCH}/targets/${TARGET}" >> $GITHUB_OUTPUT
+          echo "PACKAGES_URL=https://downloads.immortalwrt.org/releases/${BRANCH}/packages/${ARCH}" >> $GITHUB_OUTPUT
+          echo "HOST_PACKAGES_URL=https://downloads.immortalwrt.org/releases/${BRANCH}/packages/x86_64" >> $GITHUB_OUTPUT
+          # 第三方代理源（kenzok8 维护，包含 passwall/openclash/ssr-plus）
           echo "CUSTOM_KENZOK8=https://op.dllkids.xyz/packages/${ARCH}/kenzok8" >> $GITHUB_OUTPUT
           echo "CUSTOM_SMALL=https://op.dllkids.xyz/packages/${ARCH}/small" >> $GITHUB_OUTPUT
           echo "CUSTOM_OPENCLASH=https://op.dllkids.xyz/packages/${ARCH}/openclash" >> $GITHUB_OUTPUT
-          # 用于下载 x86_64 的 opkg 工具本身
-          echo "HOST_PACKAGES_URL=https://downloads.immortalwrt.org/releases/${VER}/packages/x86_64" >> $GITHUB_OUTPUT
 
-      - name: 安装 opkg 及其依赖 (从 x86_64 包中提取)
+      - name: 安装 opkg 工具（从 x86_64 包中提取）
         run: |
-          # 从 x86_64 base 目录下载 opkg 和必要的运行库
+          # 确保 ar 可用
+          if ! command -v ar &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y binutils
+          fi
+
           HOST_URL="${{ steps.config.outputs.HOST_PACKAGES_URL }}/base"
-          # 需要手动拉取 opkg 和它依赖的几个库
-          for pkg in libubox20240517 libblobmsg-json20240517 libubus20240621 opkg; do
-            # 下载最新的 ipk（文件名可能包含版本号，用通配符会有问题，所以用 wget 递归？）
-            # 简单做法：直接获取最新文件名并下载
-            wget -q -O ${pkg}.ipk "${HOST_URL}/${pkg}_*.ipk" 2>/dev/null || \
-            wget -q -O ${pkg}.ipk "$(wget -q -O - ${HOST_URL}/ | grep -oP "href=\"${pkg}_.*?\.ipk\"" | tail -1 | cut -d'"' -f2)"
+          echo "从 $HOST_URL 获取 opkg 依赖"
+
+          # 下载页面索引
+          index=$(wget -q -O - "$HOST_URL")
+          if [ -z "$index" ]; then
+            echo "错误：无法访问 $HOST_URL，请检查 ImmortalWrt 版本号是否正确"
+            exit 1
+          fi
+
+          # 函数：从索引中提取最新 ipk 文件名
+          get_latest() {
+            echo "$index" | grep -oP "href=\"\K${1}_.*?\.ipk(?=\")" | sort -V | tail -1
+          }
+
+          # 逐个下载所需包
+          for pkg in libubox libblobmsg-json libubus opkg; do
+            file=$(get_latest $pkg)
+            if [ -z "$file" ]; then
+              echo "错误：未找到软件包 $pkg"
+              exit 1
+            fi
+            echo "下载 $file"
+            wget -q "$HOST_URL/$file" -O "${pkg}.ipk"
           done
 
-          # 用 ar 解压 ipk，安装到系统根目录
+          # 解压 ipk 并安装到根目录
           for f in *.ipk; do
             ar x "$f"
             tar -xzf data.tar.gz -C /
           done
-          # 清理
           rm -f *.ipk control.tar.gz data.tar.gz debian-binary
+
+          # 验证 opkg 是否可用
+          opkg --version
 
       - name: 配置 opkg 源
         run: |
@@ -93,28 +114,32 @@ jobs:
           src/gz openclash ${{ steps.config.outputs.CUSTOM_OPENCLASH }}
           EOF
 
-      - name: 下载所有目标插件及其依赖
+      - name: 下载四个代理插件及其全部依赖
         run: |
           mkdir -p offline_packages
           opkg -f opkg.conf update
 
-          # 四个代理插件的 luci 包名
+          # 四个目标 luci 应用包名
           for pkg in luci-app-passwall luci-app-passwall2 luci-app-openclash luci-app-ssr-plus; do
-            echo "正在解析并下载: $pkg"
+            echo "正在解析并下载 $pkg 及所有依赖..."
             opkg -f opkg.conf --dest ram install --download-only --force-depends $pkg
           done
 
-          # 所有下载的 ipk 在 /var/cache/opkg/ 中
+          # 收集所有下载的 .ipk 文件
           cp /var/cache/opkg/*.ipk offline_packages/ 2>/dev/null || true
-          # 有些可能落在临时目录，保险起见
-          find /tmp/ -name "*.ipk" -exec cp {} offline_packages/ \; 2>/dev/null || true
+          # 保险：有些临时目录也可能存有 ipk
+          find /tmp -name "*.ipk" -exec cp {} offline_packages/ \; 2>/dev/null || true
+          rm -f offline_packages/Packages*
 
-      - name: 打包并上传
+      - name: 打包并上传离线包
         run: |
-          tar -czf offline-packages-${{ steps.config.outputs.TARGET }}.tar.gz offline_packages/
-          echo "离线包: offline-packages-${{ steps.config.outputs.TARGET }}.tar.gz"
+          TARGET_NAME="${{ steps.config.outputs.TARGET }}"
+          ARCHIVE_NAME="offline-packages-${TARGET_NAME}.tar.gz"
+          tar -czf "$ARCHIVE_NAME" offline_packages/
+          echo "离线包: $ARCHIVE_NAME"
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
 
-      - name: 上传到 Artifacts
+      - name: 上传到 Artifact
         uses: actions/upload-artifact@v4
         with:
           name: offline-packages-${{ steps.config.outputs.TARGET }}
