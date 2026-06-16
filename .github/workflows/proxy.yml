@@ -15,7 +15,7 @@ on:
         description: 'OpenWrt 版本 (影响软件源)'
         required: true
         type: string
-        default: '23.05'
+        default: '25.10'
         # 如果将来升级到 25.10，在此修改
 
 jobs:
