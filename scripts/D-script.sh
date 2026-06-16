@@ -1,4 +1,23 @@
+
 #!/bin/sh
+# ========== 清理磁盘空间（适用于 OpenWrt 构建目录） ==========
+echo "=== 清理旧构建文件，释放空间 ==="
+# 删除构建产物（保留配置和下载缓存）
+make clean
+
+# 如果空间仍然不足，可以进一步清理（会删除所有构建目录，但保留 config 和 dl）
+# make dirclean
+
+# 删除临时文件
+rm -rf tmp/* logs/*
+# 清空部分大包下载（可选，需要重新下载）
+# rm -rf dl/*
+
+# 检查剩余空间
+df -h
+echo "=== 开始正常编译 ==="
+
+
 # ========== 1. 添加 iStore 专属 feeds 源 ==========
 if ! grep -q "istore" feeds.conf.default; then
     echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
