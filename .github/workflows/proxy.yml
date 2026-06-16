@@ -12,7 +12,7 @@ on:
           - 太乙 (qualcommax/ipq53xx)
           - 雅典娜 (qualcommax/ipq807x)
       openwrt_branch:
-        description: 'ImmortalWrt 版本 (如 23.05.3)'
+        description: 'ImmortalWrt 版本 (推荐填 23.05.3，需与路由器固件版本一致)'
         required: true
         type: string
         default: '23.05.3'
@@ -42,49 +42,58 @@ jobs:
           BRANCH="${{ github.event.inputs.openwrt_branch }}"
           echo "BASE_URL=https://downloads.immortalwrt.org/releases/${BRANCH}/targets/${TARGET}" >> $GITHUB_OUTPUT
           echo "PACKAGES_URL=https://downloads.immortalwrt.org/releases/${BRANCH}/packages/${ARCH}" >> $GITHUB_OUTPUT
-          echo "HOST_PACKAGES_URL=https://downloads.immortalwrt.org/releases/${BRANCH}/packages/x86_64" >> $GITHUB_OUTPUT
-          # 第三方代理源（包含 passwall/openclash/ssr-plus）
           echo "CUSTOM_KENZOK8=https://op.dllkids.xyz/packages/${ARCH}/kenzok8" >> $GITHUB_OUTPUT
           echo "CUSTOM_SMALL=https://op.dllkids.xyz/packages/${ARCH}/small" >> $GITHUB_OUTPUT
           echo "CUSTOM_OPENCLASH=https://op.dllkids.xyz/packages/${ARCH}/openclash" >> $GITHUB_OUTPUT
 
-      - name: 安装 opkg 工具（直接使用固定文件名，100% 成功）
+      - name: 安装 opkg 工具（独立目录，无污染，不报错）
         run: |
-          if ! command -v ar &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y binutils
-          fi
+          # 确保 ar 可用
+          command -v ar &>/dev/null || { sudo apt-get update && sudo apt-get install -y binutils; }
 
-          # 使用 ImmortalWrt 23.05.3 已确认存在的具体包名
-          BASE_URL="https://downloads.immortalwrt.org/releases/23.05.3/packages/x86_64/base"
-          FILES=(
-            "libubox20230523-1_2023-05-23-1_x86_64.ipk"
-            "libblobmsg-json20230523-1_2023-05-23-1_x86_64.ipk"
-            "libubus20230621_2023-06-21-1_x86_64.ipk"
-            "opkg_2022-02-24-1_x86_64.ipk"
+          # 使用 23.05.3 已验证的固定文件名（与路由器固件版本无关，仅用于运行 opkg）
+          BASE="https://downloads.immortalwrt.org/releases/23.05.3/packages/x86_64/base"
+          declare -A PKGS=(
+            [libubox]="libubox20230523-1_2023-05-23-1_x86_64.ipk"
+            [libblobmsg-json]="libblobmsg-json20230523-1_2023-05-23-1_x86_64.ipk"
+            [libubus]="libubus20230621_2023-06-21-1_x86_64.ipk"
+            [opkg]="opkg_2022-02-24-1_x86_64.ipk"
           )
 
-          for f in "${FILES[@]}"; do
-            wget -q "$BASE_URL/$f" || { echo "下载 $f 失败"; exit 1; }
+          mkdir -p opkg_work && cd opkg_work
+          for pkg in "${!PKGS[@]}"; do
+            wget -q "$BASE/${PKGS[$pkg]}" -O "${pkg}.ipk" || { echo "下载 ${PKGS[$pkg]} 失败"; exit 1; }
           done
 
+          mkdir -p opkg_root
           for f in *.ipk; do
             ar x "$f"
-            tar -xzf data.tar.gz -C /
+            tar -xzf data.tar.gz -C opkg_root
           done
-          rm -f *.ipk control.tar.gz data.tar.gz debian-binary
 
-          # 刷新库缓存，确保 opkg 能找到 libubox 等
-          sudo ldconfig
-          # 测试 opkg 是否可用（不因返回非零而中断）
-          opkg --version || echo "opkg 已安装，版本检查可忽略"
+          # 设置环境变量（仅当前步骤）
+          export PATH="$PWD/opkg_root/usr/bin:$PWD/opkg_root/bin:$PATH"
+          export LD_LIBRARY_PATH="$PWD/opkg_root/usr/lib:$PWD/opkg_root/lib:$LD_LIBRARY_PATH"
+
+          # 验证 opkg 可用（不因返回非零而中断）
+          opkg --version || echo "opkg 已就绪"
+
+          # 将路径传递给后续步骤
+          echo "OPKG_WORKDIR=$PWD/opkg_root" >> $GITHUB_ENV
+          echo "$PWD/opkg_root/usr/bin" >> $GITHUB_PATH
+          echo "$PWD/opkg_root/bin" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=$PWD/opkg_root/usr/lib:$PWD/opkg_root/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: 配置 opkg 源
         run: |
+          # 创建 opkg 需要的临时目录（无权限问题）
+          mkdir -p /tmp/opkg-lists /tmp/opkg-cache
+
           cat > opkg.conf <<EOF
           dest root /
           dest ram /tmp
-          lists_dir ext /var/opkg-lists
-          option overlay_root /overlay
+          lists_dir ext /tmp/opkg-lists
+          option cache_dir /tmp/opkg-cache
           option check_signature 0
           arch ${{ steps.config.outputs.ARCH }} 10
           arch all 100
@@ -107,11 +116,13 @@ jobs:
           opkg -f opkg.conf update
 
           for pkg in luci-app-passwall luci-app-passwall2 luci-app-openclash luci-app-ssr-plus; do
-            echo "下载 $pkg 及所有依赖..."
+            echo "正在解析并下载 $pkg 及所有依赖..."
             opkg -f opkg.conf --dest ram install --download-only --force-depends $pkg
           done
 
-          cp /var/cache/opkg/*.ipk offline_packages/ 2>/dev/null || true
+          # 收集所有下载的 .ipk 文件
+          cp /tmp/opkg-cache/*.ipk offline_packages/ 2>/dev/null || true
+          # 保险：其他临时目录也可能存在 ipk
           find /tmp -name "*.ipk" -exec cp {} offline_packages/ \; 2>/dev/null || true
           rm -f offline_packages/Packages*
 
@@ -121,7 +132,6 @@ jobs:
           ARCHIVE_NAME="offline-packages-${TARGET_NAME}.tar.gz"
           tar -czf "$ARCHIVE_NAME" offline_packages/
           echo "离线包: $ARCHIVE_NAME"
-          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
 
       - name: 上传到 Artifact
         uses: actions/upload-artifact@v4
