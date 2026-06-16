@@ -43,51 +43,30 @@ make olddefconfig
 rm -f target/linux/qualcommax/patches-6.12/060*-qca-nss-clients-*.patch
 echo "已移除不兼容的 NSS 客户端补丁"
 
-# ========== 额外修复 qca-nss-ecm 与 Linux 6.12 的兼容性（添加条件编译保护） ==========
-# 创建补丁文件到 feeds 目录，使其永久生效
-PATCH_DIR="feeds/nss_packages/qca-nss-ecm/patches"
-mkdir -p "$PATCH_DIR"
-
-cat > "$PATCH_DIR/100-fix-ecm-6.12-compat.patch" << 'EOF'
---- a/ecm_interface.c
-+++ b/ecm_interface.c
-@@ -3763,7 +3763,9 @@
- 		}
- 	}
- 
-+#ifdef ECM_INTERFACE_PPTP_ENABLE
- 	if (__ppp_is_multilink(dev) > 0) {
-+#endif
- 		/*
- 		 * We are a multilink PPP interface, we can also do handling similar to PPP.
- 		 */
-@@ -3872,9 +3874,11 @@
- 					pppoe_channel_addressing_get(&opt, ppp_chan[0]);
- 					break;
- 
-+#ifdef ECM_INTERFACE_PPTP_ENABLE
- 				case ECM_INTERFACE_PPP_TYPE_PPTP:
- 					pptp_channel_addressing_get(&opt, ppp_chan[0]);
- 					break;
-+#endif
- 
- 				default:
- 					DEBUG_WARN("Unknown PPP channel type\n");
-@@ -6763,7 +6767,9 @@
- 						unsigned char *mac_addr = ecm_sfe_ipv6_get_macaddr(addr6);
- 
- 						if (mac_addr && !is_multicast_ether_addr(mac_addr)) {
-+#ifdef ECM_INTERFACE_VXLAN_ENABLE
- 							vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);
-+#endif
- 						}
- 					}
- 				}
-EOF
-
-# 更新 nss_packages feeds 以应用补丁
+# ========== 🔥 额外修复 qca-nss-ecm 与 Linux 6.12 的兼容性（直接修改源码） ==========
+# 先更新 nss_packages 以获取源码
 ./scripts/feeds update nss_packages
 ./scripts/feeds install -a -p nss_packages
+
+# 定位 ecm_interface.c 文件（可能在 feeds 或 package 目录）
+ECM_SRC="$(find feeds/nss_packages/qca-nss-ecm -name "ecm_interface.c" | head -1)"
+if [ -n "$ECM_SRC" ] && [ -f "$ECM_SRC" ]; then
+    echo "找到 ecm_interface.c: $ECM_SRC，正在添加条件编译保护..."
+    # 备份原文件
+    cp "$ECM_SRC" "$ECM_SRC.bak"
+    # 为 __ppp_is_multilink 调用前后插入 #ifdef / #endif
+    sed -i '/if (__ppp_is_multilink(dev) > 0) {/i #ifdef ECM_INTERFACE_PPTP_ENABLE' "$ECM_SRC"
+    sed -i '/if (__ppp_is_multilink(dev) > 0) {/a #endif' "$ECM_SRC"
+    # 为 pptp_channel_addressing_get 调用前后插入 #ifdef / #endif
+    sed -i '/pptp_channel_addressing_get(&opt, ppp_chan\[0\]);/i #ifdef ECM_INTERFACE_PPTP_ENABLE' "$ECM_SRC"
+    sed -i '/pptp_channel_addressing_get(&opt, ppp_chan\[0\]);/a #endif' "$ECM_SRC"
+    # 为 vxlan_fdb_update_mac 调用前后插入 #ifdef / #endif
+    sed -i '/vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);/i #ifdef ECM_INTERFACE_VXLAN_ENABLE' "$ECM_SRC"
+    sed -i '/vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);/a #endif' "$ECM_SRC"
+    echo "✅ 已添加条件编译保护到 ecm_interface.c"
+else
+    echo "⚠️ 警告：未找到 ecm_interface.c，跳过修复（可能路径不同）"
+fi
 
 # 清理 ECM 构建残留，避免旧对象干扰
 rm -rf build_dir/target-*/qca-nss-ecm-*
@@ -152,4 +131,4 @@ EOF
 chmod +x package/base-files/files/root/install-proxy.sh
 
 echo "已添加 iStore 源，写入配置并重新 defconfig，同时生成代理打包脚本和安装脚本"
-echo "已修复 qca-nss-ecm 与 Linux 6.12 的兼容性问题"
+echo "已修复 qca-nss-ecm 与 Linux 6.12 的兼容性问题（直接修改源码）"
