@@ -1,18 +1,55 @@
 #!/bin/sh
-# ========== 1. 添加 iStore 专属 feeds 源（编译前执行） ==========
+# ========== 1. 添加 iStore 专属 feeds 源 ==========
 if ! grep -q "istore" feeds.conf.default; then
     echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
     echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
     echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
 fi
 
-# 更新并安装 iStore 相关的 feeds
+# 更新并安装 iStore 相关 feeds
 ./scripts/feeds update istore nas nas_luci
 ./scripts/feeds install -a -p istore
 ./scripts/feeds install -a -p nas
 ./scripts/feeds install -a -p nas_luci
 
-# ========== 2. 将 iStore/Docker 组件写入 .config（强制编译进固件） ==========
+# ========== 2. 更新 nss_packages（必须在删除补丁之前） ==========
+./scripts/feeds update nss_packages
+./scripts/feeds install -a -p nss_packages
+
+# ========== 3. 删除不兼容的补丁（更新后立即执行） ==========
+PATCH_FILE="feeds/nss_packages/qca-nss-ecm/patches/100-fix-ecm-6.12-compat.patch"
+if [ -f "$PATCH_FILE" ]; then
+    rm -f "$PATCH_FILE"
+    echo "已删除旧的补丁文件 $PATCH_FILE"
+fi
+
+# 同时删除其他可能冲突的 NSS 客户端补丁（如有）
+rm -f target/linux/qualcommax/patches-6.12/060*-qca-nss-clients-*.patch
+
+# ========== 4. 手动修改 ecm_interface.c 添加条件编译保护 ==========
+ECM_SRC="$(find feeds/nss_packages/qca-nss-ecm -name "ecm_interface.c" | head -1)"
+if [ -n "$ECM_SRC" ] && [ -f "$ECM_SRC" ]; then
+    echo "找到 ecm_interface.c: $ECM_SRC，正在添加条件编译保护..."
+    cp "$ECM_SRC" "$ECM_SRC.bak"
+    # 为 __ppp_is_multilink 调用加宏保护
+    sed -i '/if (__ppp_is_multilink(dev) > 0) {/i #ifdef ECM_INTERFACE_PPTP_ENABLE' "$ECM_SRC"
+    sed -i '/if (__ppp_is_multilink(dev) > 0) {/a #endif' "$ECM_SRC"
+    # 为 pptp_channel_addressing_get 调用加宏保护
+    sed -i '/pptp_channel_addressing_get(&opt, ppp_chan\[0\]);/i #ifdef ECM_INTERFACE_PPTP_ENABLE' "$ECM_SRC"
+    sed -i '/pptp_channel_addressing_get(&opt, ppp_chan\[0\]);/a #endif' "$ECM_SRC"
+    # 为 vxlan_fdb_update_mac 调用加宏保护
+    sed -i '/vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);/i #ifdef ECM_INTERFACE_VXLAN_ENABLE' "$ECM_SRC"
+    sed -i '/vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);/a #endif' "$ECM_SRC"
+    echo "✅ 已添加条件编译保护到 ecm_interface.c"
+else
+    echo "⚠️ 警告：未找到 ecm_interface.c，跳过修复"
+fi
+
+# ========== 5. 清理 ECM 构建残留 ==========
+rm -rf build_dir/target-*/qca-nss-ecm-*
+
+# ========== 6. 配置选项（写入 .config） ==========
+# 启用 iStore / Docker 相关包
 ./scripts/config --enable CONFIG_PACKAGE_luci-app-istorex \
                  --enable CONFIG_PACKAGE_luci-app-quickstart \
                  --enable CONFIG_PACKAGE_luci-app-store \
@@ -35,48 +72,10 @@ fi
                  --disable CONFIG_ECM_INTERFACE_TUNIPIP6 \
                  --disable CONFIG_ECM_INTERFACE_BOND
 
+# ========== 7. 生成最终配置 ==========
 make olddefconfig
 
-# ========== 修复因内核版本升级导致的 NSS 补丁失败 ==========
-rm -f target/linux/qualcommax/patches-6.12/060*-qca-nss-clients-*.patch
-echo "已移除不兼容的 NSS 客户端补丁"
-
-# ========== 🔥 额外修复 qca-nss-ecm 与 Linux 6.12 的兼容性 ==========
-# 1. 删除可能存在的旧补丁文件（这是导致错误的根源）
-PATCH_FILE="feeds/nss_packages/qca-nss-ecm/patches/100-fix-ecm-6.12-compat.patch"
-if [ -f "$PATCH_FILE" ]; then
-    rm -f "$PATCH_FILE"
-    echo "已删除旧的补丁文件 $PATCH_FILE"
-fi
-
-# 2. 更新 nss_packages 并安装（确保源码最新）
-./scripts/feeds update nss_packages
-./scripts/feeds install -a -p nss_packages
-
-# 3. 定位 ecm_interface.c 并直接用 sed 插入条件编译宏
-ECM_SRC="$(find feeds/nss_packages/qca-nss-ecm -name "ecm_interface.c" | head -1)"
-if [ -n "$ECM_SRC" ] && [ -f "$ECM_SRC" ]; then
-    echo "找到 ecm_interface.c: $ECM_SRC，正在添加条件编译保护..."
-    cp "$ECM_SRC" "$ECM_SRC.bak"
-    # 为 __ppp_is_multilink 调用加宏保护
-    sed -i '/if (__ppp_is_multilink(dev) > 0) {/i #ifdef ECM_INTERFACE_PPTP_ENABLE' "$ECM_SRC"
-    sed -i '/if (__ppp_is_multilink(dev) > 0) {/a #endif' "$ECM_SRC"
-    # 为 pptp_channel_addressing_get 调用加宏保护
-    sed -i '/pptp_channel_addressing_get(&opt, ppp_chan\[0\]);/i #ifdef ECM_INTERFACE_PPTP_ENABLE' "$ECM_SRC"
-    sed -i '/pptp_channel_addressing_get(&opt, ppp_chan\[0\]);/a #endif' "$ECM_SRC"
-    # 为 vxlan_fdb_update_mac 调用加宏保护
-    sed -i '/vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);/i #ifdef ECM_INTERFACE_VXLAN_ENABLE' "$ECM_SRC"
-    sed -i '/vxlan_fdb_update_mac(priv, mac_addr, vxlan_info.vni);/a #endif' "$ECM_SRC"
-    echo "✅ 已添加条件编译保护到 ecm_interface.c"
-else
-    echo "⚠️ 警告：未找到 ecm_interface.c，跳过修复（可能路径不同）"
-fi
-
-# 4. 清理 ECM 构建残留，避免旧对象干扰
-rm -rf build_dir/target-*/qca-nss-ecm-*
-echo "已清理 ECM 构建残留"
-
-# ========== 3. 生成代理插件打包脚本（供编译后使用） ==========
+# ========== 8. 生成代理插件打包脚本（供编译后使用） ==========
 cat > "$(pwd)/collect_proxy_pkgs.sh" << 'EOF'
 #!/bin/sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -114,7 +113,7 @@ rm -rf "$WORK_DIR"
 EOF
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
 
-# ========== 4. 预置安装脚本到固件 ==========
+# ========== 9. 预置安装脚本到固件 ==========
 mkdir -p package/base-files/files/root
 cat > package/base-files/files/root/install-proxy.sh << 'EOF'
 #!/bin/sh
@@ -134,5 +133,8 @@ fi
 EOF
 chmod +x package/base-files/files/root/install-proxy.sh
 
-echo "已添加 iStore 源，写入配置并重新 defconfig，同时生成代理打包脚本和安装脚本"
-echo "已修复 qca-nss-ecm 与 Linux 6.12 的兼容性问题（已删除冲突补丁并直接修改源码）"
+echo "========== 所有准备工作完成 =========="
+echo "- iStore 源已添加，NSS 补丁已删除并手动修复"
+echo "- 配置已更新 (olddefconfig)"
+echo "- 代理打包脚本和安装脚本已生成"
+echo "现在可以执行 make 或 make world 开始编译"
