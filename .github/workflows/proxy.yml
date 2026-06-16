@@ -61,34 +61,47 @@ jobs:
           # 下载页面索引
           index=$(wget -q -O - "$HOST_URL")
           if [ -z "$index" ]; then
-            echo "错误：无法访问 $HOST_URL，请检查 ImmortalWrt 版本号是否正确"
+            echo "错误：无法访问 $HOST_URL，请检查网络或 URL 是否正确"
             exit 1
           fi
 
-          # 函数：从索引中提取最新 ipk 文件名
+          # 健壮的包名提取函数 (兼容所有 grep/sed)
           get_latest() {
-            echo "$index" | grep -oP "href=\"\K${1}_.*?\.ipk(?=\")" | sort -V | tail -1
+            # 匹配 href="包名_版本_架构.ipk" ，返回纯文件名
+            echo "$index" | grep -o "href=\"${1}_[^\"]*\.ipk\"" | sed 's/href="//;s/"//' | sort -V | tail -1
           }
 
-          # 逐个下载所需包
+          # 调试输出：显示所有相关包
+          echo "可用的 libubox 包："
+          echo "$index" | grep -o "href=\"libubox[^\"]*\.ipk\"" | sed 's/href="//;s/"//'
+          echo "可用的 opkg 包："
+          echo "$index" | grep -o "href=\"opkg[^\"]*\.ipk\"" | sed 's/href="//;s/"//'
+
+          # 逐个下载
           for pkg in libubox libblobmsg-json libubus opkg; do
             file=$(get_latest $pkg)
             if [ -z "$file" ]; then
               echo "错误：未找到软件包 $pkg"
+              echo "可能原因：版本号不对或镜像目录结构变化"
               exit 1
             fi
             echo "下载 $file"
             wget -q "$HOST_URL/$file" -O "${pkg}.ipk"
+            # 检查下载是否成功
+            if [ ! -s "${pkg}.ipk" ]; then
+              echo "下载 ${pkg}.ipk 失败"
+              exit 1
+            fi
           done
 
-          # 解压 ipk 并安装到根目录
+          # 解压安装
           for f in *.ipk; do
             ar x "$f"
             tar -xzf data.tar.gz -C /
           done
           rm -f *.ipk control.tar.gz data.tar.gz debian-binary
 
-          # 验证 opkg 是否可用
+          # 验证
           opkg --version
 
       - name: 配置 opkg 源
