@@ -1,5 +1,5 @@
 #!/bin/sh
-# ========== 1. 添加 iStore 专属 feeds 源（编译前执行） ==========
+# ========== 1. 添加 iStore 专属 feeds 源 ==========
 if ! grep -q "istore" feeds.conf.default; then
     echo 'src-git istore https://github.com/linkease/istore.git;main' >> feeds.conf.default
     echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
@@ -12,51 +12,68 @@ fi
 ./scripts/feeds install -a -p nas
 ./scripts/feeds install -a -p nas_luci
 
-# ========== 全局刷新 feeds，确保所有依赖（如 docker 核心）可用 ==========
+# ========== 全局刷新 feeds，确保所有依赖可用 ==========
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# ========== 2. 将 iStore/Docker 组件写入 .config（强制编译进固件） ==========
-cat >> .config << 'EOF'
-# iStore 核心组件
-CONFIG_PACKAGE_luci-app-istorex=y
-CONFIG_PACKAGE_luci-app-quickstart=y
-CONFIG_PACKAGE_luci-app-store=y
-# Docker 核心及管理器
-CONFIG_PACKAGE_docker=y
-CONFIG_PACKAGE_dockerd=y
-CONFIG_PACKAGE_containerd=y
-CONFIG_PACKAGE_runc=y
-CONFIG_PACKAGE_luci-app-dockerman=y
-CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
-# iStore 依赖库
-CONFIG_PACKAGE_luci-lib-taskd=y
-CONFIG_PACKAGE_luci-lib-xterm=y
-CONFIG_PACKAGE_luci-compat=y
-# 可选配套工具
-CONFIG_PACKAGE_luci-app-diskman=y
-CONFIG_PACKAGE_luci-app-ddns-to=y
+# ========== 2. 使用 scripts/config 安全设置所有选项 ==========
+# 启用 iStore 核心组件
+./scripts/config --enable CONFIG_PACKAGE_luci-app-istorex \
+                 --enable CONFIG_PACKAGE_luci-app-quickstart \
+                 --enable CONFIG_PACKAGE_luci-app-store
 
-# NSS ECM 编译修复（禁用与内核 6.12 不兼容的选项，使用正确选项名）
-CONFIG_ECM_INTERFACE_PPTP=n
-CONFIG_ECM_INTERFACE_VXLAN=n
-CONFIG_ECM_INTERFACE_L2TPV2=n
-CONFIG_ECM_INTERFACE_GRE=n
-CONFIG_ECM_INTERFACE_GRE_TAP=n
-CONFIG_ECM_INTERFACE_GRE_TUN=n
-CONFIG_ECM_INTERFACE_SIT=n
-CONFIG_ECM_INTERFACE_TUNIPIP6=n
-CONFIG_ECM_INTERFACE_BOND=n
-EOF
+# 启用 Docker 核心及管理界面
+./scripts/config --enable CONFIG_PACKAGE_docker \
+                 --enable CONFIG_PACKAGE_dockerd \
+                 --enable CONFIG_PACKAGE_containerd \
+                 --enable CONFIG_PACKAGE_runc \
+                 --enable CONFIG_PACKAGE_luci-app-dockerman \
+                 --enable CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn
 
-# 关键步骤：重新解析配置，使上述选项生效
+# 启用 iStore 依赖库
+./scripts/config --enable CONFIG_PACKAGE_luci-lib-taskd \
+                 --enable CONFIG_PACKAGE_luci-lib-xterm \
+                 --enable CONFIG_PACKAGE_luci-compat
+
+# 启用可选配套工具
+./scripts/config --enable CONFIG_PACKAGE_luci-app-diskman \
+                 --enable CONFIG_PACKAGE_luci-app-ddns-to
+
+# 禁用与内核 6.12 不兼容的 NSS ECM 接口
+./scripts/config --disable CONFIG_ECM_INTERFACE_PPTP \
+                 --disable CONFIG_ECM_INTERFACE_VXLAN \
+                 --disable CONFIG_ECM_INTERFACE_L2TPV2 \
+                 --disable CONFIG_ECM_INTERFACE_GRE \
+                 --disable CONFIG_ECM_INTERFACE_GRE_TAP \
+                 --disable CONFIG_ECM_INTERFACE_GRE_TUN \
+                 --disable CONFIG_ECM_INTERFACE_SIT \
+                 --disable CONFIG_ECM_INTERFACE_TUNIPIP6 \
+                 --disable CONFIG_ECM_INTERFACE_BOND
+
+# ========== 关键：启用 Docker 所需的内核功能 ==========
+./scripts/config --enable CONFIG_KERNEL_CGROUPS \
+                 --enable CONFIG_KERNEL_CGROUP_CPUACCT \
+                 --enable CONFIG_KERNEL_CGROUP_DEVICE \
+                 --enable CONFIG_KERNEL_CGROUP_FREEZER \
+                 --enable CONFIG_KERNEL_CGROUP_SCHED \
+                 --enable CONFIG_KERNEL_CPUSETS \
+                 --enable CONFIG_KERNEL_NAMESPACES \
+                 --enable CONFIG_KERNEL_NET_NS \
+                 --enable CONFIG_KERNEL_PID_NS \
+                 --enable CONFIG_KERNEL_IPC_NS \
+                 --enable CONFIG_KERNEL_UTS_NS \
+                 --enable CONFIG_KERNEL_USER_NS \
+                 --enable CONFIG_KERNEL_OVERLAY_FS \
+                 --enable CONFIG_KERNEL_VETH
+
+# 重新生成配置（使依赖自动解析）
 make defconfig
 
-# ========== 修复因内核版本升级导致的 NSS 补丁失败 ==========
+# ========== 3. 修复因内核版本升级导致的 NSS 补丁失败 ==========
 rm -f target/linux/qualcommax/patches-6.12/060*-qca-nss-clients-*.patch
 echo "已移除不兼容的 NSS 客户端补丁"
 
-# ========== 3. 生成代理插件打包脚本（供编译后使用） ==========
+# ========== 4. 生成代理插件打包脚本 ==========
 cat > "$(pwd)/collect_proxy_pkgs.sh" << 'EOF'
 #!/bin/sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -94,7 +111,7 @@ rm -rf "$WORK_DIR"
 EOF
 chmod +x "$(pwd)/collect_proxy_pkgs.sh"
 
-# ========== 4. 预置安装脚本到固件 ==========
+# ========== 5. 预置安装脚本到固件 ==========
 mkdir -p package/base-files/files/root
 cat > package/base-files/files/root/install-proxy.sh << 'EOF'
 #!/bin/sh
