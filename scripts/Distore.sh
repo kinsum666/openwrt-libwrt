@@ -12,13 +12,21 @@ fi
 ./scripts/feeds install -a -p nas
 ./scripts/feeds install -a -p nas_luci
 
+# ========== 全局刷新 feeds，确保所有依赖（如 docker 核心）可用 ==========
+./scripts/feeds update -a
+./scripts/feeds install -a
+
 # ========== 2. 将 iStore/Docker 组件写入 .config（强制编译进固件） ==========
 cat >> .config << 'EOF'
 # iStore 核心组件
 CONFIG_PACKAGE_luci-app-istorex=y
 CONFIG_PACKAGE_luci-app-quickstart=y
 CONFIG_PACKAGE_luci-app-store=y
-# Docker 管理器（iStore 依赖）
+# Docker 核心及管理器
+CONFIG_PACKAGE_docker=y
+CONFIG_PACKAGE_dockerd=y
+CONFIG_PACKAGE_containerd=y
+CONFIG_PACKAGE_runc=y
 CONFIG_PACKAGE_luci-app-dockerman=y
 CONFIG_PACKAGE_luci-i18n-dockerman-zh-cn=y
 # iStore 依赖库
@@ -29,18 +37,16 @@ CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci-app-diskman=y
 CONFIG_PACKAGE_luci-app-ddns-to=y
 
-# NSS ECM 编译修复（禁用与内核 6.12 不兼容的选项）
-CONFIG_ECM_INTERFACE_PPTP_ENABLE=n
-CONFIG_ECM_INTERFACE_VXLAN_ENABLE=n
-CONFIG_ECM_INTERFACE_L2TPV2_ENABLE=n
-CONFIG_ECM_INTERFACE_GRE_ENABLE=n
-CONFIG_ECM_INTERFACE_GRE_TAP_ENABLE=n
-CONFIG_ECM_INTERFACE_GRE_TUN_ENABLE=n
-CONFIG_ECM_INTERFACE_SIT_ENABLE=n
-CONFIG_ECM_INTERFACE_TUNIPIP6_ENABLE=n
-CONFIG_ECM_INTERFACE_BOND_ENABLE=n
-
-
+# NSS ECM 编译修复（禁用与内核 6.12 不兼容的选项，使用正确选项名）
+CONFIG_ECM_INTERFACE_PPTP=n
+CONFIG_ECM_INTERFACE_VXLAN=n
+CONFIG_ECM_INTERFACE_L2TPV2=n
+CONFIG_ECM_INTERFACE_GRE=n
+CONFIG_ECM_INTERFACE_GRE_TAP=n
+CONFIG_ECM_INTERFACE_GRE_TUN=n
+CONFIG_ECM_INTERFACE_SIT=n
+CONFIG_ECM_INTERFACE_TUNIPIP6=n
+CONFIG_ECM_INTERFACE_BOND=n
 EOF
 
 # 关键步骤：重新解析配置，使上述选项生效
